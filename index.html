@@ -303,14 +303,14 @@
 const ALBUMS = {
   happysad:   {title:'happysad',                videoId:'Y6V54tRJ1UY'},
   kickinit:   {title:'kickinit alone',          videoId:'cOExO3F2YmI'},
-  bridges:    {title:'bridges',                 videoId:'Ib28lr0whl8'},
+  bridges:    {title:'bridges',                 videoId:'Ib28lr0whl8', cover:'bridges-cover.jpg'},
   filesystem: {title:"kiefer's file system",    videoId:'X27cTU3St-I'},
   superbloom: {title:'superbloom',              videoId:'8oaHND6q1jY'},
   betweendays:{title:'between days',            videoId:'6bqpoT2wqio'},
   lovearound: {title:"when there's love around",videoId:'mEd7P6B61Yg'},
   itsokbu:    {title:"it's ok, b u",            videoId:'644WGMBIzj8'},
   fathers:    {title:'fathers',                 videoId:'dldFDOi3sJU'},
-  club:       {title:'live at the secret gig',  videoId:'d0K7qZIORH0', cover:'club-cover.jpg'},
+  club:       {title:'live at wonderland park', videoId:'d0K7qZIORH0', cover:'club-cover.jpg', thumbId:'UeWOUtvP8y4'},
 };
 
 /* ---------------- world constants ---------------- */
@@ -1138,13 +1138,21 @@ const NEBULAS=[
   {x:3100,y:1400,rx:650,ry:400,c:'#7fc4bd',a:.055,seed:602},
   {x:1800,y:2900,rx:750,ry:380,c:'#e8b64c',a:.04,seed:603},
 ];
-function drawGalaxy(ctx,t){
-  for(const n of NEBULAS)blob(ctx,n.x,n.y,n.rx,n.ry,n.seed,n.c,n.a);
-  for(const s of STARS){
-    const tw=.45+.55*Math.abs(Math.sin(t*.9+s.tw));
-    ctx.save();ctx.fillStyle=s.c;ctx.globalAlpha=tw*.8;
-    ctx.beginPath();ctx.arc(s.x,s.y,s.s,0,7);ctx.fill();ctx.restore();
+function drawGalaxy(ctx,t,camX,camY){
+  // only what the camera can see
+  const x0=camX-vw/2-80,x1=camX+vw/2+80,y0=camY-vh/2-80,y1=camY+vh/2+80;
+  for(const n of NEBULAS){
+    if(n.x+n.rx<x0||n.x-n.rx>x1||n.y+n.ry<y0||n.y-n.ry>y1)continue;
+    blob(ctx,n.x,n.y,n.rx,n.ry,n.seed,n.c,n.a);
   }
+  ctx.save();
+  for(const s of STARS){
+    if(s.x<x0||s.x>x1||s.y<y0||s.y>y1)continue;
+    const tw=.45+.55*Math.abs(Math.sin(t*.9+s.tw));
+    ctx.fillStyle=s.c;ctx.globalAlpha=tw*.8;
+    ctx.beginPath();ctx.arc(s.x,s.y,s.s,0,7);ctx.fill();
+  }
+  ctx.restore();
   // a shooting star every so often
   if(MOTION){
     const cyc=Math.floor(t/9), sp=(t%9)/1.2;
@@ -1168,19 +1176,28 @@ const RAILS=[
   [[3300,620],[3300,1560]],[[3300,1560],[3300,2500]],
   [[2000,3130],[700,2500]],[[2000,3130],[2000,2500]],[[2000,3130],[3300,2500]],
 ];
-function drawRails(ctx){
-  ctx.save();
-  for(const [a,b] of RAILS){
-    const dx=b[0]-a[0],dy=b[1]-a[1],d=Math.hypot(dx,dy),steps=Math.floor(d/95);
-    const ang=Math.atan2(dy,dx);
-    for(let i=1;i<steps;i++){
-      const px=a[0]+dx*i/steps+((i*37)%23-11),py=a[1]+dy*i/steps+((i*53)%19-9);
-      if(islandAt(px,py,1.03))continue;
-      ctx.fillStyle='#b9aecf';ctx.globalAlpha=.5;
-      ctx.beginPath();ctx.ellipse(px,py,14,9,ang,0,7);ctx.fill();
-      ctx.fillStyle='#e8e2f2';ctx.globalAlpha=.3;
-      ctx.beginPath();ctx.ellipse(px-3,py-3,5,3,0,0,7);ctx.fill();
+let railStones=null; // precomputed once — drawing culls to the viewport
+function drawRails(ctx,camX,camY){
+  if(!railStones){
+    railStones=[];
+    for(const [a,b] of RAILS){
+      const dx=b[0]-a[0],dy=b[1]-a[1],d=Math.hypot(dx,dy),steps=Math.floor(d/95);
+      const ang=Math.atan2(dy,dx);
+      for(let i=1;i<steps;i++){
+        const px=a[0]+dx*i/steps+((i*37)%23-11),py=a[1]+dy*i/steps+((i*53)%19-9);
+        if(islandAt(px,py,1.03))continue;
+        railStones.push({x:px,y:py,ang});
+      }
     }
+  }
+  const x0=camX-vw/2-30,x1=camX+vw/2+30,y0=camY-vh/2-30,y1=camY+vh/2+30;
+  ctx.save();
+  for(const s of railStones){
+    if(s.x<x0||s.x>x1||s.y<y0||s.y>y1)continue;
+    ctx.fillStyle='#b9aecf';ctx.globalAlpha=.5;
+    ctx.beginPath();ctx.ellipse(s.x,s.y,14,9,s.ang,0,7);ctx.fill();
+    ctx.fillStyle='#e8e2f2';ctx.globalAlpha=.3;
+    ctx.beginPath();ctx.ellipse(s.x-3,s.y-3,5,3,0,0,7);ctx.fill();
   }
   ctx.restore();
 }
@@ -1457,6 +1474,7 @@ function drawPlayer(ctx,t){
    music engine — one hidden youtube player + floating cover
    ================================================================ */
 let yt=null, ytReady=false, loadedZone=null, playState=-1;
+const failedCovers=new Set(); // custom cover files that 404'd — don't retry them
 const bar=document.getElementById('bar');
 const barTitle=document.getElementById('barTitle');
 const barState=document.getElementById('barState');
@@ -1469,7 +1487,12 @@ window.onYouTubeIframeAPIReady=function(){
     playerVars:{controls:0,disablekb:1,fs:0,iv_load_policy:3,rel:0,playsinline:1},
     events:{
       onReady(){ytReady=true;},
-      onStateChange(e){playState=e.data;updateBar();},
+      onStateChange(e){
+        playState=e.data;
+        // keep the hidden video as light as possible — we only want the sound
+        if(e.data===1){try{yt.setPlaybackQuality('small');}catch(err){}}
+        updateBar();
+      },
       onError(){barState.textContent='(track unavailable)';}
     }
   });
@@ -1489,7 +1512,8 @@ function updateBar(){
     const label=tune||album.title;
     barTitle.textContent=/kiefer/i.test(label)?label:label+' — kiefer';
     barState.textContent=playing?'':(playState===0?'· ended':'· paused');
-    const src=album.cover||`https://i.ytimg.com/vi/${album.videoId}/mqdefault.jpg`;
+    const custom=album.cover&&!failedCovers.has(album.cover)?album.cover:null;
+    const src=custom||`https://i.ytimg.com/vi/${album.thumbId||album.videoId}/mqdefault.jpg`;
     if(coverImg.getAttribute('src')!==src)coverImg.src=src;
   }
   coverWrap.classList.toggle('show',playing);
@@ -1519,6 +1543,8 @@ function toggleZone(z){
 /* ---------------- suggestion bubble ---------------- */
 const bubble=document.getElementById('bubble');
 let currentZone=null, nearGame=false, lastNearGame=false, onClubIsland=false;
+let bubbleH=46; // cached so the render loop never forces a reflow
+function measureBubble(){bubbleH=bubble.offsetHeight||46;}
 function refreshBubble(){
   if(scene==='club')return;          // the club scene drives the bubble itself
   if(onClubIsland){
@@ -1539,6 +1565,7 @@ function refreshBubble(){
     html+=`<span class="sub"><span class="key">e</span> play ${currentZone.game.name}</span>`;
   bubble.innerHTML=html;
   bubble.classList.add('show');
+  measureBubble();
 }
 bubble.addEventListener('click',()=>{
   if(scene==='club')return;
@@ -1554,20 +1581,25 @@ const lbClose=document.getElementById('lbClose');
 let lightboxOpen=false;
 lbImg.addEventListener('error',()=>{ // custom cover missing → maxres → smaller thumb
   if(!loadedZone)return;
-  const maxres=`https://i.ytimg.com/vi/${ALBUMS[loadedZone.id].videoId}/maxresdefault.jpg`;
+  const album=ALBUMS[loadedZone.id];
+  if(album.cover&&lbImg.src.indexOf(album.cover)>=0)failedCovers.add(album.cover);
+  const maxres=`https://i.ytimg.com/vi/${album.thumbId||album.videoId}/maxresdefault.jpg`;
   if(lbImg.src.indexOf('maxresdefault')<0){lbImg.src=maxres;return;}
   const mq=maxres.replace('maxresdefault','mqdefault');
   if(lbImg.src!==mq)lbImg.src=mq;
 });
 coverImg.addEventListener('error',()=>{ // custom cover missing → video thumb
   if(!loadedZone)return;
-  const fb=`https://i.ytimg.com/vi/${ALBUMS[loadedZone.id].videoId}/mqdefault.jpg`;
+  const album=ALBUMS[loadedZone.id];
+  if(album.cover&&coverImg.src.indexOf(album.cover)>=0)failedCovers.add(album.cover);
+  const fb=`https://i.ytimg.com/vi/${album.thumbId||album.videoId}/mqdefault.jpg`;
   if(coverImg.getAttribute('src')!==fb)coverImg.src=fb;
 });
 function openLightbox(){
   if(!loadedZone)return;
   const album=ALBUMS[loadedZone.id];
-  lbImg.src=album.cover||`https://i.ytimg.com/vi/${album.videoId}/maxresdefault.jpg`;
+  const custom=album.cover&&!failedCovers.has(album.cover)?album.cover:null;
+  lbImg.src=custom||`https://i.ytimg.com/vi/${album.thumbId||album.videoId}/maxresdefault.jpg`;
   lbTitle.textContent=album.title+' — kiefer';
   lightbox.classList.add('show');lightboxOpen=true;
 }
@@ -2138,12 +2170,12 @@ fathers:{name:'lawn day',make(root){
 /* ================================================================
    the secret jazz club — interior scene
    ================================================================ */
-let scene='world', seated=false, gigOn=false, clubHotspot=null;
+let scene='world', seated=false, gigOn=false, clubHotspot=null, this_lastClubPlaying=false;
 const CLUBROOM={w:1500,h:980};
 const clubCam={x:750,y:600};
 const clubPlayer={x:750,y:860,face:1,phase:0,moving:false};
 const CLUBZONE={id:'club'};                       // pseudo-zone for the music engine
-const BENCH={x:700,y:315}, DOOR={x:750,y:915};
+const BENCH={x:700,y:301}, DOOR={x:750,y:915};
 const TABLES=[[430,560],[720,520],[1010,580],[480,760],[820,720],[1120,780]];
 
 function enterClub(){
@@ -2227,7 +2259,7 @@ function drawBand(ctx,t){
   ctx.restore();
 }
 function drawPiano(ctx,t){
-  const x=700,y=250;
+  const x=700,y=232;
   ctx.save();ctx.translate(x,y);
   softShadow(ctx,0,64,110,16,.25);
   // open lid
@@ -2405,7 +2437,7 @@ function clubLighting(ctx,t){
     ctx.beginPath();ctx.arc(bx,47,4.5,0,7);ctx.fill();
     ctx.restore();
   };
-  beam(700,700,306,'232,182,76',.5*pulse,105);   // kiefer at the grand — amber
+  beam(700,700,292,'232,182,76',.5*pulse,105);   // kiefer at the grand — amber
   beam(480,480,258,'127,196,189',.4,72);         // the bassist — teal
   beam(1000,1000,262,'200,106,138',.4,88);       // the drummer — rose
   // candlelight on the tables stays soft
@@ -2431,20 +2463,20 @@ function clubFrame(dt,t,mx,my,inputting){
       p.y=Math.max(180,Math.min(CLUBROOM.h-30,p.y));
     }
   }
-  // hotspots + bubble
+  // hotspots + bubble (only touch the DOM when something changed)
   let hs=null;
   if(seated)hs='seated';
   else if(Math.hypot(p.x-BENCH.x,p.y-BENCH.y)<85)hs='bench';
   else if(Math.hypot(p.x-DOOR.x,p.y-DOOR.y)<95)hs='door';
   const playing=playState===1||playState===3;
-  if(hs==='seated'){
-    bubble.innerHTML=`<span class="key">enter</span> ${playing?'pause':'play'} &nbsp;·&nbsp; arrows to stand up`;
-    bubble.classList.add('show');
-  }else if(hs!==clubHotspot){
-    if(hs==='bench')bubble.innerHTML=`<span class="key">enter</span> play with the band &#9834;`;
+  if(hs!==clubHotspot||(hs==='seated'&&playing!==this_lastClubPlaying)){
+    if(hs==='seated')bubble.innerHTML=`<span class="key">enter</span> ${playing?'pause':'play'} &nbsp;·&nbsp; arrows to stand up`;
+    else if(hs==='bench')bubble.innerHTML=`<span class="key">enter</span> play with the band &#9834;`;
     else if(hs==='door')bubble.innerHTML=`<span class="key">enter</span> step back outside`;
     bubble.classList.toggle('show',!!hs);
+    measureBubble();
   }
+  this_lastClubPlaying=playing;
   clubHotspot=hs;
   // camera
   clubCam.x+=(p.x-clubCam.x)*Math.min(1,dt*4);
@@ -2465,7 +2497,7 @@ function clubFrame(dt,t,mx,my,inputting){
   const ax=(seated?BENCH.x:p.x)+offX, ay=(seated?BENCH.y-20:p.y)+offY;
   if(clubHotspot){bubble.style.left=ax+'px';bubble.style.top=(ay-58)+'px';}
   if(playing){
-    const lift=clubHotspot?58+bubble.offsetHeight+16:66;
+    const lift=clubHotspot?58+bubbleH+16:66;
     coverWrap.style.left=ax+'px';coverWrap.style.top=(ay-lift)+'px';
   }
 }
@@ -2520,7 +2552,7 @@ const canvas=document.getElementById('world');
 const ctx=canvas.getContext('2d');
 let vw=0,vh=0,dpr=1;
 function resize(){
-  dpr=Math.min(2,devicePixelRatio||1);
+  dpr=Math.min(1.5,devicePixelRatio||1);
   vw=innerWidth;vh=innerHeight;
   canvas.width=vw*dpr;canvas.height=vh*dpr;
   canvas.style.width=vw+'px';canvas.style.height=vh+'px';
@@ -2617,13 +2649,13 @@ function frame(now){
   ctx.fillStyle='#2b2340';ctx.fillRect(0,0,vw,vh);
   ctx.translate(vw/2-camX,vh/2-camY);
 
-  drawGalaxy(ctx,t);
+  drawGalaxy(ctx,t,camX,camY);
 
   // world edge doodle
   ctx.save();ctx.strokeStyle='#f3e9b0';ctx.globalAlpha=.1;ctx.lineWidth=4;ctx.setLineDash([14,18]);
   rrect(ctx,30,30,WORLD_W-60,WORLD_H-60,80);ctx.stroke();ctx.restore();
 
-  drawRails(ctx);
+  drawRails(ctx,camX,camY);
 
   // islands: rocky base then diorama
   islandBase(ctx,PLAZA,99);
@@ -2648,7 +2680,7 @@ function frame(now){
   }
   const playing=playState===1||playState===3;
   if(playing){
-    const lift=currentZone?58+bubble.offsetHeight+16:66;
+    const lift=(currentZone||onClubIsland)?58+bubbleH+16:66;
     coverWrap.style.left=psx+'px';
     coverWrap.style.top=(psy-lift)+'px';
   }
