@@ -1475,6 +1475,35 @@ function drawPlayer(ctx,t){
    ================================================================ */
 let yt=null, ytReady=false, loadedZone=null, playState=-1;
 const failedCovers=new Set(); // custom cover files that 404'd — don't retry them
+
+/* ---------- local audio engine ----------
+   drop your own legally-owned files into tracks/<albumId>.mp3
+   (e.g. tracks/bridges.mp3, tracks/club.mp3) and they play natively —
+   no hidden video to decode, no lag. missing files fall back to youtube. */
+const localAudio=new Audio();
+localAudio.preload='none';
+localAudio.volume=.9;
+let usingLocal=false;          // which engine owns the current track
+const localAvail={};           // albumId → true | false (unknown = try it)
+localAudio.addEventListener('playing',()=>{if(usingLocal){playState=1;updateBar();}});
+localAudio.addEventListener('pause',()=>{if(usingLocal&&!localAudio.ended){playState=2;updateBar();}});
+localAudio.addEventListener('ended',()=>{if(usingLocal){playState=0;updateBar();}});
+function pauseAll(){
+  if(usingLocal){if(!localAudio.paused)localAudio.pause();}
+  else if(ytReady&&(playState===1||playState===3)){try{yt.pauseVideo();}catch(e){}}
+}
+function pauseResume(){
+  if(usingLocal){
+    if(localAudio.paused){
+      if(localAudio.ended)localAudio.currentTime=0;
+      localAudio.play().catch(()=>{});
+    }else localAudio.pause();
+  }else if(ytReady&&loadedZone){
+    if(playState===1||playState===3)yt.pauseVideo();
+    else if(playState===2)yt.playVideo();
+    else yt.loadVideoById(ALBUMS[loadedZone.id].videoId);
+  }
+}
 const bar=document.getElementById('bar');
 const barTitle=document.getElementById('barTitle');
 const barState=document.getElementById('barState');
@@ -1488,6 +1517,7 @@ window.onYouTubeIframeAPIReady=function(){
     events:{
       onReady(){ytReady=true;},
       onStateChange(e){
+        if(usingLocal)return;   // local audio owns playback — ignore stale iframe events
         playState=e.data;
         // keep the hidden video as light as possible — we only want the sound
         if(e.data===1){try{yt.setPlaybackQuality('small');}catch(err){}}
@@ -1506,8 +1536,10 @@ function updateBar(){
     // show the tune's name, not the album's (bubble keeps the album name)
     let tune='';
     try{
-      const vd=yt&&yt.getVideoData?yt.getVideoData():null;
-      if(vd&&vd.title&&vd.video_id===album.videoId)tune=vd.title;
+      if(!usingLocal){
+        const vd=yt&&yt.getVideoData?yt.getVideoData():null;
+        if(vd&&vd.title&&vd.video_id===album.videoId)tune=vd.title;
+      }
     }catch(e){}
     const label=tune||album.title;
     barTitle.textContent=/kiefer/i.test(label)?label:label+' — kiefer';
@@ -1523,18 +1555,39 @@ function cueZone(z){
   if(!ytReady||loadedZone===z)return;
   if(playState===1||playState===3)return;      // never interrupt playing music
   loadedZone=z;
+  usingLocal=false;
   yt.cueVideoById(ALBUMS[z.id].videoId);
   updateBar();
 }
-function toggleZone(z){
+function ytToggle(z,forceStart){
   if(!ytReady)return;
-  if(loadedZone===z){
+  if(usingLocal&&!localAudio.paused)localAudio.pause();
+  usingLocal=false;
+  if(!forceStart&&loadedZone===z){
     if(playState===1||playState===3)yt.pauseVideo();
     else if(playState===2)yt.playVideo();               // resume from pause
     else yt.loadVideoById(ALBUMS[z.id].videoId);        // cued / ended / idle → (re)start
   }else{
     loadedZone=z;
     yt.loadVideoById(ALBUMS[z.id].videoId);
+  }
+}
+function toggleZone(z){
+  const id=z.id;
+  if(localAvail[id]!==false){
+    // local file first — silent fallback to youtube if it isn't there
+    if(usingLocal&&loadedZone===z){
+      if(localAudio.paused)localAudio.play().catch(()=>{});
+      else localAudio.pause();
+    }else{
+      if(ytReady&&!usingLocal&&(playState===1||playState===3)){try{yt.pauseVideo();}catch(e){}}
+      loadedZone=z;usingLocal=true;playState=3;
+      localAudio.src='tracks/'+id+'.mp3';
+      localAudio.play().then(()=>{localAvail[id]=true;})
+        .catch(()=>{localAvail[id]=false;ytToggle(z,true);updateBar();});
+    }
+  }else{
+    ytToggle(z);
   }
   collectVinyl(z,last/1000);                            // listening grabs the island's vinyl
   updateBar();
@@ -1609,7 +1662,7 @@ lbClose.addEventListener('click',closeLightbox);
 lightbox.addEventListener('click',e=>{if(e.target===lightbox)closeLightbox();});
 bar.addEventListener('click',()=>{
   if(!loadedZone)return;
-  if(playState===1||playState===3)yt.pauseVideo();else yt.playVideo();
+  pauseResume();
 });
 bar.addEventListener('keydown',e=>{
   if(e.key===' '){e.preventDefault();bar.click();}
@@ -2183,14 +2236,14 @@ function enterClub(){
   clubPlayer.x=DOOR.x;clubPlayer.y=DOOR.y-56;clubPlayer.face=1;
   clubCam.x=clubPlayer.x;clubCam.y=clubPlayer.y;
   seated=false;clubHotspot=null;
-  if(playState===1||playState===3){try{yt.pauseVideo();}catch(e){}}   // hush at the door
+  pauseAll();                                          // hush at the door
   bubble.classList.remove('show');
   toast(gigOn?'welcome back ♪':'the room hushes as you walk in…',2800);
 }
 function leaveClub(){
   scene='world';
   seated=false;clubHotspot=null;
-  if(loadedZone===CLUBZONE){try{yt.pauseVideo();}catch(e){}}
+  if(loadedZone===CLUBZONE)pauseAll();
   bubble.classList.remove('show');
   player.mode='ground';player.island=CLUB;
   player.x=CLUB.cx;player.y=CLUB.cy+120;
@@ -2199,9 +2252,8 @@ function leaveClub(){
 }
 function startGig(){
   seated=true;gigOn=true;
-  loadedZone=CLUBZONE;
-  yt.loadVideoById(ALBUMS.club.videoId);
-  updateBar();
+  if(loadedZone===CLUBZONE&&(playState===1||playState===3))return;  // band's already going
+  toggleZone(CLUBZONE);   // local tracks/club.mp3 first, youtube fallback
 }
 
 function clubPerson(ctx,x,y,skin,opts={}){
@@ -2522,9 +2574,8 @@ addEventListener('keydown',e=>{
     e.preventDefault();
     if(scene==='club'){
       if(seated){
-        if(playState===1||playState===3)yt.pauseVideo();
-        else if(playState===2)yt.playVideo();
-        else yt.loadVideoById(ALBUMS.club.videoId);
+        if(loadedZone===CLUBZONE)pauseResume();
+        else startGig();
         return;
       }
       if(clubHotspot==='bench'){startGig();return;}
@@ -2533,10 +2584,7 @@ addEventListener('keydown',e=>{
     }
     if(onClubIsland){if(clubUnlocked())enterClub();return;}
     if(currentZone)toggleZone(currentZone);
-    else if(loadedZone){
-      if(playState===1||playState===3)yt.pauseVideo();
-      else if(playState===2)yt.playVideo();
-    }
+    else if(loadedZone)pauseResume();
     return;
   }
   if(e.key==='e'||e.key==='E'){

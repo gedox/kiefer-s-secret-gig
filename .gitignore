@@ -1,0 +1,5 @@
+# purchased music stays local — never publish it to the repo
+tracks/*.mp3
+tracks/*.m4a
+tracks/*.wav
+tracks/*.flac
