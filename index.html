@@ -171,6 +171,11 @@
   }
   #vinylHud.pop .disc{animation:vpop .55s ease;}
   @keyframes vpop{40%{transform:scale(1.55) rotate(50deg)}}
+  #vinylReset{
+    background:none;border:none;color:#f4eee2;opacity:.45;cursor:pointer;
+    font:inherit;font-size:19px;line-height:1;padding:0 0 0 2px;
+  }
+  #vinylReset:hover{opacity:1;}
 
   #toast{
     position:fixed;top:64px;left:50%;z-index:11;
@@ -278,7 +283,7 @@
 </div>
 <div id="hint">&#8592;&#8593;&#8595;&#8594; ride &amp; float &nbsp;&middot;&nbsp; enter listen &nbsp;&middot;&nbsp; e play</div>
 <div id="credit">made with love for kiefer &#9825;</div>
-<div id="vinylHud" aria-label="vinyls collected"><div class="disc"></div><span id="vinylCount">&times; 0</span></div>
+<div id="vinylHud" aria-label="vinyls collected"><div class="disc"></div><span id="vinylCount">&times; 0</span><button id="vinylReset" title="restart the vinyl hunt" aria-label="restart the vinyl hunt">&#8635;</button></div>
 <div id="toast" aria-live="polite"></div>
 
 <div id="arcade" role="dialog" aria-label="mini game">
@@ -1217,6 +1222,25 @@ function toast(msg,ms=3200){
 function clubUnlocked(){return collected.size>=zones.length;}
 function updateVinylHud(){vinylCountEl.textContent='× '+collected.size;}
 updateVinylHud();
+/* ↺ on the hud restarts the hunt (click twice so it can't happen by accident) */
+let resetArm=0;
+document.getElementById('vinylReset').addEventListener('click',()=>{
+  if(scene!=='world')return;
+  const now=performance.now();
+  if(now-resetArm<3000){
+    collected.clear();
+    localStorage.removeItem('kiefer_vinyls');
+    zones.forEach(z=>{delete z.state.vinylT;});
+    gigOn=false;
+    updateVinylHud();refreshBubble();
+    toast('fresh start — the vinyls are back on their islands ♪');
+    resetArm=0;
+  }else{
+    resetArm=now;
+    toast('click ↺ again to restart the vinyl hunt');
+  }
+});
+
 function collectVinyl(z,t){
   if(!z.vinyl||collected.has(z.id))return;
   collected.add(z.id);
