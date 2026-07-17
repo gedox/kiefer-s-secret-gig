@@ -1210,7 +1210,7 @@ function drawRails(ctx,camX,camY){
 /* ================================================================
    vinyl collection
    ================================================================ */
-const collected=new Set(JSON.parse(localStorage.getItem('kiefer_vinyls')||'[]'));
+const collected=new Set(); // session-only: closing the game restarts the hunt
 const vinylHud=document.getElementById('vinylHud');
 const vinylCountEl=document.getElementById('vinylCount');
 const toastEl=document.getElementById('toast');
@@ -1229,7 +1229,6 @@ document.getElementById('vinylReset').addEventListener('click',()=>{
   const now=performance.now();
   if(now-resetArm<3000){
     collected.clear();
-    localStorage.removeItem('kiefer_vinyls');
     zones.forEach(z=>{delete z.state.vinylT;});
     gigOn=false;
     updateVinylHud();refreshBubble();
@@ -1244,7 +1243,6 @@ document.getElementById('vinylReset').addEventListener('click',()=>{
 function collectVinyl(z,t){
   if(!z.vinyl||collected.has(z.id))return;
   collected.add(z.id);
-  localStorage.setItem('kiefer_vinyls',JSON.stringify([...collected]));
   z.state.vinylT=t;
   updateVinylHud();
   vinylHud.classList.remove('pop');void vinylHud.offsetWidth;vinylHud.classList.add('pop');
@@ -1500,33 +1498,14 @@ function drawPlayer(ctx,t){
 let yt=null, ytReady=false, loadedZone=null, playState=-1;
 const failedCovers=new Set(); // custom cover files that 404'd — don't retry them
 
-/* ---------- local audio engine ----------
-   drop your own legally-owned files into tracks/<albumId>.mp3
-   (e.g. tracks/bridges.mp3, tracks/club.mp3) and they play natively —
-   no hidden video to decode, no lag. missing files fall back to youtube. */
-const localAudio=new Audio();
-localAudio.preload='none';
-localAudio.volume=.9;
-let usingLocal=false;          // which engine owns the current track
-const localAvail={};           // albumId → true | false (unknown = try it)
-localAudio.addEventListener('playing',()=>{if(usingLocal){playState=1;updateBar();}});
-localAudio.addEventListener('pause',()=>{if(usingLocal&&!localAudio.ended){playState=2;updateBar();}});
-localAudio.addEventListener('ended',()=>{if(usingLocal){playState=0;updateBar();}});
 function pauseAll(){
-  if(usingLocal){if(!localAudio.paused)localAudio.pause();}
-  else if(ytReady&&(playState===1||playState===3)){try{yt.pauseVideo();}catch(e){}}
+  if(ytReady&&(playState===1||playState===3)){try{yt.pauseVideo();}catch(e){}}
 }
 function pauseResume(){
-  if(usingLocal){
-    if(localAudio.paused){
-      if(localAudio.ended)localAudio.currentTime=0;
-      localAudio.play().catch(()=>{});
-    }else localAudio.pause();
-  }else if(ytReady&&loadedZone){
-    if(playState===1||playState===3)yt.pauseVideo();
-    else if(playState===2)yt.playVideo();
-    else yt.loadVideoById(ALBUMS[loadedZone.id].videoId);
-  }
+  if(!ytReady||!loadedZone)return;
+  if(playState===1||playState===3)yt.pauseVideo();
+  else if(playState===2)yt.playVideo();
+  else yt.loadVideoById(ALBUMS[loadedZone.id].videoId);
 }
 const bar=document.getElementById('bar');
 const barTitle=document.getElementById('barTitle');
@@ -1541,7 +1520,6 @@ window.onYouTubeIframeAPIReady=function(){
     events:{
       onReady(){ytReady=true;},
       onStateChange(e){
-        if(usingLocal)return;   // local audio owns playback — ignore stale iframe events
         playState=e.data;
         // keep the hidden video as light as possible — we only want the sound
         if(e.data===1){try{yt.setPlaybackQuality('small');}catch(err){}}
@@ -1560,10 +1538,8 @@ function updateBar(){
     // show the tune's name, not the album's (bubble keeps the album name)
     let tune='';
     try{
-      if(!usingLocal){
-        const vd=yt&&yt.getVideoData?yt.getVideoData():null;
-        if(vd&&vd.title&&vd.video_id===album.videoId)tune=vd.title;
-      }
+      const vd=yt&&yt.getVideoData?yt.getVideoData():null;
+      if(vd&&vd.title&&vd.video_id===album.videoId)tune=vd.title;
     }catch(e){}
     const label=tune||album.title;
     barTitle.textContent=/kiefer/i.test(label)?label:label+' — kiefer';
@@ -1579,39 +1555,18 @@ function cueZone(z){
   if(!ytReady||loadedZone===z)return;
   if(playState===1||playState===3)return;      // never interrupt playing music
   loadedZone=z;
-  usingLocal=false;
   yt.cueVideoById(ALBUMS[z.id].videoId);
   updateBar();
 }
-function ytToggle(z,forceStart){
+function toggleZone(z){
   if(!ytReady)return;
-  if(usingLocal&&!localAudio.paused)localAudio.pause();
-  usingLocal=false;
-  if(!forceStart&&loadedZone===z){
+  if(loadedZone===z){
     if(playState===1||playState===3)yt.pauseVideo();
     else if(playState===2)yt.playVideo();               // resume from pause
     else yt.loadVideoById(ALBUMS[z.id].videoId);        // cued / ended / idle → (re)start
   }else{
     loadedZone=z;
     yt.loadVideoById(ALBUMS[z.id].videoId);
-  }
-}
-function toggleZone(z){
-  const id=z.id;
-  if(localAvail[id]!==false){
-    // local file first — silent fallback to youtube if it isn't there
-    if(usingLocal&&loadedZone===z){
-      if(localAudio.paused)localAudio.play().catch(()=>{});
-      else localAudio.pause();
-    }else{
-      if(ytReady&&!usingLocal&&(playState===1||playState===3)){try{yt.pauseVideo();}catch(e){}}
-      loadedZone=z;usingLocal=true;playState=3;
-      localAudio.src='tracks/'+id+'.mp3';
-      localAudio.play().then(()=>{localAvail[id]=true;})
-        .catch(()=>{localAvail[id]=false;ytToggle(z,true);updateBar();});
-    }
-  }else{
-    ytToggle(z);
   }
   collectVinyl(z,last/1000);                            // listening grabs the island's vinyl
   updateBar();
@@ -2277,7 +2232,7 @@ function leaveClub(){
 function startGig(){
   seated=true;gigOn=true;
   if(loadedZone===CLUBZONE&&(playState===1||playState===3))return;  // band's already going
-  toggleZone(CLUBZONE);   // local tracks/club.mp3 first, youtube fallback
+  toggleZone(CLUBZONE);
 }
 
 function clubPerson(ctx,x,y,skin,opts={}){
